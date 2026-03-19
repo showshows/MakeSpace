@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MakeSpace</title>
+<style>
+  body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; background: linear-gradient(to bottom, #110924, #2d1c52, #473275); font-family: sans-serif; color: white; }
+  #sky { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; overflow: hidden; }
+  #ground { position: absolute; bottom: -10vh; left: -10vw; width: 120vw; height: 30vh; background: linear-gradient(to bottom, #1e3d2f, #0d1f17); border-radius: 50% 50% 0 0; z-index: 10; pointer-events: none; }
+  
+  .ui-container { position: absolute; z-index: 20; padding: 20px; top: 0; left: 0; width: 100%; box-sizing: border-box; display: flex; justify-content: space-between; pointer-events: none; display: none; }
+  .btn { pointer-events: auto; padding: 10px 20px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); color: white; border-radius: 20px; cursor: pointer; backdrop-filter: blur(5px); }
+  
+  .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(20, 10, 40, 0.95); padding: 30px; border-radius: 15px; border: 1px solid #5d4296; z-index: 30; flex-direction: column; gap: 15px; width: 320px; text-align: center; }
+  .modal.active { display: flex; }
+  .modal input, .modal textarea { width: 100%; background: rgba(255,255,255,0.1); border: 1px solid #8860d0; color: white; padding: 12px; border-radius: 8px; box-sizing: border-box; outline: none; text-align: center; }
+  
+  .star { 
+    position: absolute; 
+    width: 12px; height: 12px; 
+    background: #fffde0; 
+    border-radius: 50%; 
+    cursor: pointer; 
+    box-shadow: 0 0 10px #fffde0; 
+    opacity: 0; 
+    transform: translateY(100vh); 
+    transition: transform 2s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 1.5s;
+    z-index: 5;
+    pointer-events: auto;
+  }
+  
+  .star.placed { 
+    opacity: 1; 
+    transform: translateY(0); 
+    animation: twinkle 3s infinite alternate 2s;
+  }
+  
+  @keyframes twinkle { 
+    0% { opacity: 0.5; transform: scale(0.8); box-shadow: 0 0 5px #fffde0; } 
+    100% { opacity: 1; transform: scale(1.2); box-shadow: 0 0 20px #fffde0; } 
+  }
+</style>
+</head>
+<body>
+
+<div id="sky"></div>
+<div id="ground"></div>
+
+<div id="lobbyModal" class="modal active">
+  <h2 style="margin: 0 0 10px 0;">Space station</h2>
+  <p id="authStatus" style="font-size: 12px; color: #a282ea; margin-bottom: 10px;">Loading login...</p>
+  
+  <div class="section-box" style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px;">
+    <button id="loginBtn" class="btn" style="width: 100%; display: none;">Google login</button>
+    <button id="generateCodeBtn" class="btn" style="display:none; width: 100%; background: #5d4296;">Get new Space Code</button>
+    
+    <div id="newCodeDisplay" style="display:none; margin-top: 15px;">
+      <h1 id="generatedCode" style="margin: 5px 0; letter-spacing: 3px; font-size: 28px;"></h1>
+      <button id="enterMySpaceBtn" class="btn" style="width: 100%; margin-top: 10px; background: #473275;">Enter my space</button>
+    </div>
+  </div>
+
+  <div class="section-box" style="margin-top: 15px;">
+    <input type="text" id="codeInput" maxlength="8" placeholder="8-digit Space code">
+    <button id="joinBtn" class="btn" style="width: 100%; margin-top: 10px;">Enter space</button>
+  </div>
+</div>
+
+<div class="ui-container" id="mainUI">
+  <div id="left-ui"><button id="codeDisplayBtn" class="btn"></button></div>
+  <div id="right-ui"><button id="shootStarBtn" class="btn">Shoot a star</button></div>
+</div>
+
+<div id="writeModal" class="modal">
+  <input type="text" id="starName" maxlength="20" placeholder="Star name">
+  <textarea id="starMessage" maxlength="100" placeholder="Letters" style="height: 80px;"></textarea>
+  <button id="submitStarBtn" class="btn">Shoot</button>
+  <button id="closeWriteBtn" class="btn">Cancel</button>
+</div>
+
+<div id="readModal" class="modal">
+  <h3 id="readName"></h3>
+  <p id="readMessage"></p>
+  <button id="closeReadBtn" class="btn">Close</button>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+  import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDatGIDN_ie5ug0tbQ72jPZNneZuBxxm7A",
+    authDomain: "my-universe-yipe.firebaseapp.com",
+    projectId: "my-universe-yipe",
+    storageBucket: "my-universe-yipe.firebasestorage.app",
+    messagingSenderId: "21656781786",
+    appId: "1:21656781786:web:67a2cc12e031f8b98db6e3",
+    measurementId: "G-0DSK0P25NY"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  let currentCode, currentOwnerUid;
+
+  onAuthStateChanged(auth, (user) => {
+    const statusText = document.getElementById('authStatus');
+    const loginBtn = document.getElementById('loginBtn');
+    const genBtn = document.getElementById('generateCodeBtn');
+    if (user) {
+      statusText.innerText = `Logged on as ${user.displayName}`;
+      loginBtn.style.display = 'none';
+      genBtn.style.display = 'block';
+    } else {
+      statusText.innerText = "Login required.";
+      loginBtn.style.display = 'block';
+      genBtn.style.display = 'none';
+    }
+  });
+
+  document.getElementById('loginBtn').onclick = () => signInWithPopup(auth, new GoogleAuthProvider());
+
+  document.getElementById('generateCodeBtn').onclick = async () => {
+    const code = Math.floor(10000000 + Math.random() * 90000000).toString();
+    await setDoc(doc(db, "spaces", code), { ownerUid: auth.currentUser.uid, createdAt: serverTimestamp() });
+    document.getElementById('generateCodeBtn').style.display = 'none';
+    document.getElementById('newCodeDisplay').style.display = 'block';
+    document.getElementById('generatedCode').innerText = code;
+    document.getElementById('enterMySpaceBtn').onclick = () => enterSpace(code, auth.currentUser.uid);
+  };
+
+  document.getElementById('joinBtn').onclick = async () => {
+    const code = document.getElementById('codeInput').value.trim();
+    const docSnap = await getDoc(doc(db, "spaces", code));
+    if (docSnap.exists()) enterSpace(code, docSnap.data().ownerUid);
+    else alert("Wrong code.");
+  };
+
+  function enterSpace(code, ownerUid) {
+    currentCode = code;
+    currentOwnerUid = ownerUid;
+    document.getElementById('lobbyModal').classList.remove('active');
+    document.getElementById('mainUI').style.display = 'flex';
+    document.getElementById('codeDisplayBtn').innerText = `Space Code: ${code}`;
+    loadStars();
+  }
+
+document.getElementById('submitStarBtn').onclick = async () => {
+  const nameInput = document.getElementById('starName');
+  const msgInput = document.getElementById('starMessage');
+  const submitBtn = document.getElementById('submitStarBtn');
+
+  if (!nameInput.value || !msgInput.value) return;
+
+  submitBtn.disabled = true;
+  submitBtn.innerText = "Shooting a star...";
+
+  try {
+    const x = 10 + Math.random() * 80;
+    const y = 10 + Math.random() * 50;
+    
+    await addDoc(collection(db, `spaces/${currentCode}/stars`), { 
+      name: nameInput.value, 
+      message: msgInput.value, 
+      x, y, 
+      createdAt: serverTimestamp() 
+    });
+
+    document.getElementById('writeModal').classList.remove('active');
+    nameInput.value = '';
+    msgInput.value = '';
+  } catch (e) {
+    alert("Failed to shoot the star: " + e.message);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerText = "Shoot";
+  }
+};
+
+  function loadStars() {
+    const q = query(collection(db, `spaces/${currentCode}/stars`), orderBy("createdAt", "asc"));
+    onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") createStarElement(change.doc.data());
+      });
+    });
+  }
+
+  function createStarElement(data) {
+    const star = document.createElement('div');
+    star.className = 'star';
+    star.style.left = `${data.x}vw`;
+    star.style.top = `${data.y}vh`; 
+    
+    document.getElementById('sky').appendChild(star);
+    
+    setTimeout(() => {
+      star.classList.add('placed');
+    }, 50);
+
+    star.onclick = () => {
+      if (auth.currentUser?.uid === currentOwnerUid) {
+        document.getElementById('readName').innerText = data.name;
+        document.getElementById('readMessage').innerText = data.message;
+        document.getElementById('readModal').classList.add('active');
+      } else alert("Only the space owner can read.");
+    };
+  }
+
+  document.getElementById('shootStarBtn').onclick = () => document.getElementById('writeModal').classList.add('active');
+  document.getElementById('closeWriteBtn').onclick = () => document.getElementById('writeModal').classList.remove('active');
+  document.getElementById('closeReadBtn').onclick = () => document.getElementById('readModal').classList.remove('active');
+  document.getElementById('codeDisplayBtn').onclick = () => {
+    navigator.clipboard.writeText(currentCode);
+    alert("Code copied!");
+  };
+</script>
+</body>
+</html>
